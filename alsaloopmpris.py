@@ -40,8 +40,9 @@ import dbus.service
 from dbus.mainloop.glib import DBusGMainLoop
 
 from alsaaudio import \
-    pcms, cards, PCM, PCM_PLAYBACK, PCM_CAPTURE, PCM_NORMAL, \
-    PCM_FORMAT_S16_LE
+    pcms, cards, PCM, PCM_PLAYBACK, PCM_CAPTURE, PCM_NORMAL, PCM_NONBLOCK, \
+    PCM_FORMAT_S16_LE, PCM_FORMAT_S32_LE
+
 
 try:
     from gi.repository import GLib
@@ -169,7 +170,7 @@ class ALSALoopWrapper(threading.Thread):
     """ Wrapper to handle internal alsaloop
     """
 
-    def __init__(self):
+    def __init__(self, auto_start = True):
         super().__init__()
         self.playerid = None
         self.playback_status = "stopped"
@@ -179,74 +180,227 @@ class ALSALoopWrapper(threading.Thread):
 
         self.bus = dbus.SessionBus()
         self.received_data = False
+        
+        self.auto_start = auto_start
 
-        self.alsaloop = None
-        self.streamname = ""
-
-        self.mode = PCM_NORMAL
         self.pcmformat = PCM_FORMAT_S16_LE
         self.buffersize = 512
+        self.samplerate = 48000
+        
+        self.playback = None
+        self.record = None
+        
+    def __del__(self):
+        if self.playback is not None:
+            self.playback = None
+            
+        if self.record is not None:
+            self.record = None
+            
+        
 
     def run(self):
         try:
             self.dbus_service = MPRISInterface()
-            self.mainloop()
+#            self.mainloop()
+            self.simple_loop()
 
         except Exception as e:
             logging.error("ALSALoopWrapper thread exception: %s", e)
+            logging.exception(e)
             sys.exit(1)
 
         logging.error("ALSALoopWrapper thread died - this should not happen")
         sys.exit(1)
+        
+        
+ 
+                
 
-    def pcm_open_record(self):
-        record = PCM(type=PCM_CAPTURE,
-                         mode=self.mode,
-                         device="sysdefault:CARD=sndrpihifiberry")
-        record.setformat(self.pcmformat)
-        record.setperiodsize(self.buffersize)
-        return record
+    def record_device(self):
+        if self.record is not None:
+            return self.record
+        
+        inp = PCM(PCM_CAPTURE, PCM_NONBLOCK, device="sysdefault:CARD=sndrpihifiberry")
 
-    def pcm_open_playback(self):
-        playback = PCM(type=PCM_PLAYBACK,
-                       mode=self.mode,
-                       device="sysdefault:CARD=sndrpihifiberry")
-        playback.setformat(self.pcmformat)
-        playback.setperiodsize(self.buffersize)
+        # Set attributes: Stereo, 44100 Hz, 16 bit little endian samples
+        inp.setchannels(2)
+        inp.setrate(44100)
+        inp.setformat(PCM_FORMAT_S16_LE)
+        inp.setperiodsize(1024)
+
+        self.record = inp
+    
+        return self.record
+
+    def playback_device(self):
+        if self.playback is not None:
+            return self.playback
+
+        out = PCM(PCM_PLAYBACK, device="sysdefault:CARD=sndrpihifiberry")
+
+        # Set attributes:Stereo, 44100 Hz, 16 bit little endian frames
+        out.setchannels(2)
+        out.setrate(44100)
+        out.setformat(PCM_FORMAT_S16_LE)
+
+        # The period size controls the internal number of frames per period.
+        # The significance of this parameter is documented in the ALSA api.
+        out.setperiodsize(1024)        
+        
+        self.playback = out
+        return self.playback
+    
+    
+class alsaloopWrapper(threading.Thread):
+    """ Wrapper to handle alsaloopclient
+    """
+
+    def __init__(self, alsaloopserver):
+        super().__init__()
+        self.playerid = None
+        self.playback_status = "stopped"
+        self.metadata = {}
+        self.server = alsaloopserver
+
+        self.dbus_service = None
+
+        self.bus = dbus.SessionBus()
+        self.received_data = False
+
+        self.alsaloopclient = None
+        self.streamname = ""
+
+    def run(self):
+        try:
+            self.dbus_service = MPRISInterface()
+
+            self.mainloop()
+
+        except Exception as e:
+            logging.error("alsaloopwrapper thread exception: %s", e)
+            sys.exit(1)
+
+        logging.error("alsaloopwrapper thread died - this should not happen")
+        sys.exit(1)
+
+    def mainloop_external(self):
+        current_playback_status = None
+        while True:
+            if self.playback_status != current_playback_status:
+                current_playback_status = self.playback_status
+
+                # Changed - do something
+
+                if self.playback_status == PLAYBACK_PLAYING:
+                    if self.alsaloopclient is None:
+                        logging.info("pausing other players")
+                        subprocess.run(["/opt/hifiberry/bin/pause-all", "alsaloop"])
+                        logging.info("starting alsaloop")
+                        self.alsaloopclient = \
+                            subprocess.Popen("/bin/alsaloop -P default -r i48000 -f S32_LE -t 100000 -S 1",
+                                              stdout=subprocess.PIPE,
+                                              stderr=subprocess.PIPE,
+                                              shell=True)
+                        logging.info("alsaloop now running in background")
+                    else:
+                        logging.error("alsaloop process seems to be running already")
+
+                else:
+                    # Not playing: kill client
+                    if self.alsaloopclient is None:
+                        logging.info("No alsaloop client running, doing nothing")
+                    else:
+                        logging.info("Killing alsaloop client, doing nothing")
+                        self.alsaloopclient.kill()
+                        # Wait until it died
+                        _outs, _errs = self.alsaloopclient.communicate()
+                        self.alsaloopclient = None
+
+                # Playback status has changed, now inform DBUS
+                self.update_metadata()
+                self.dbus_service.update_property('org.mpris.MediaPlayer2.Player',
+                                                  'PlaybackStatus')
+
+            # Check if alsaloop is still running
+            if self.alsaloopclient:
+                if self.alsaloopclient.poll() is not None:
+                    logging.warning("snapclient died")
+                    self.playback_status = PLAYBACK_STOPPED
+                    self.alsaloopclient = None
+
+
+            time.sleep(0.2)
+
+
 
     def mainloop(self, detect_threshold=300):
+        """ 
+        This is not yet working as the alsaudio stuff doesn't seem to work stable 
+        in a background thread
+        """
+        
         current_playback_status = None
         finished = False
         signal_detected = False
 
-        record = self.pcm_open_record()
+        record = self.record_device()
 
         while not finished:
+            
+            if signal_detected and self.auto_start:
+                self.playback_status = PLAYBACK_PLAYING
+            
+            if not(signal_detected):
+                self.playback_status = PLAYBACK_STOPPED
+                
+            self.playback_status = PLAYBACK_PLAYING
+            
             if self.playback_status != current_playback_status:
+                logging.error("playback status changed from %s to %s",
+                             current_playback_status, self.playback_status)
                 if self.playback_status == PLAYBACK_PLAYING:
-                    playback = self.pcm_open_playback()
+                    logging.error("opening playback device")
+                    playback = self.playback_device()
+                    logging.error("opened playback device")
                 else:
                     playback = None
+            else:
+                logging.debug("playback status unchanged")
+            current_playback_status = self.playback_status
 
             size, data = record.read()
-            if size < self.buffersize:
-                logging.error("underrun")
+            if not(size):
+                time.sleep(0.001);
                 continue
 
+            if (len(data) % 4) != 0:
+                logging.error("oops %s", len(data))
+            
             # do something with the data
-            i = 0
-            rms = 0
-            while i < len(data):
-                l, r = struct.unpack_from("<hh", data, i)
-                rms = rms + l * l + r * r
-                i += 4
-                if abs(l) > detect_threshold or abs(r) > detect_threshold:
-                    signal_detected
-
-            rms = math.sqrt(rms / self.buffersize)
+#             i = 0
+#             rms = 0
+#             while i < len(data):
+#                 l, r = struct.unpack_from("<hh", data, i)
+#                 rms = rms + l * l + r * r
+#                 i += 4
+#                 if abs(l) > detect_threshold or abs(r) > detect_threshold:
+#                     signal_detected = True
+# 
+#             rms = math.sqrt(rms / self.buffersize)
+            
+            # DEBUGGING ONLY
+                        
 
             if self.playback_status == PLAYBACK_PLAYING:
-                playback.write(data)
+                try:
+                    playback.write(data)
+                except Exception as e:
+                    logging.exception(e)
+                    logging.warning("could not write output to sound card, stopping")
+                    self.playback_status = PLAYBACK_STOPPED
+                    
+            time.sleep(.001)
 
     def update_metadata(self):
         if self.alsaloopclient is not None:
@@ -423,16 +577,12 @@ def stopalsaloop(signalNumber, frame):
 def parse_config(debugmode=False):
     config = configparser.ConfigParser()
     try:
-        with open("/etc/alsaloopmpris.conf") as f:
-            config.read_string("[alsaloop]\n" + f.read())
-        logging.info("read /etc/alsaloopclient.conf")
+        config.read("/etc/alsaloop.conf")
+        logging.info("read /etc/alsaloop.conf")
     except:
-        logging.info("can't read /etc/alsaloopclient.conf, using default configurations")
-        config = {"general": {}}
-
-    # Server to connect to
-    server = config.get("alsaloop", "server")
-    alsaloopWrapper = alsaloopWrapper(server)
+        pass
+    
+    alsaloopWrapper = ALSALoopWrapper()
 
     # Auto start for alsaloop
     if config.getboolean("alsaloop", "autostart", fallback=True):
