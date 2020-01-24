@@ -190,33 +190,70 @@ class ALSALoopWrapper(threading.Thread):
         self.playback = None
         self.record = None
         
-    def __del__(self):
-        if self.playback is not None:
-            self.playback = None
-            
-        if self.record is not None:
-            self.record = None
-            
-        
+        self.alsaloopclient = None
 
     def run(self):
         try:
             self.dbus_service = MPRISInterface()
-#            self.mainloop()
-            self.simple_loop()
+
+            self.mainloop_external()
 
         except Exception as e:
-            logging.error("ALSALoopWrapper thread exception: %s", e)
-            logging.exception(e)
+            logging.error("Alsaloopwrapper thread exception: %s", e)
             sys.exit(1)
 
-        logging.error("ALSALoopWrapper thread died - this should not happen")
+        logging.error("AlsaloopWrapper thread died - this should not happen")
         sys.exit(1)
-        
-        
- 
-                
 
+    def mainloop_external(self):
+        current_playback_status = None
+        while True:
+            if self.playback_status != current_playback_status:
+                current_playback_status = self.playback_status
+
+                # Changed - do something
+
+                if self.playback_status == PLAYBACK_PLAYING:
+                    if self.alsaloopclient is None:
+                        logging.info("pausing other players")
+                        subprocess.run(["/opt/hifiberry/bin/pause-all", "alsaloop"])
+                        logging.info("starting alsaloop")
+                        self.alsaloopclient = \
+                            subprocess.Popen("/bin/alsaloop -P default -r 48000 -f S32_LE -t 100000 -S 1",
+                                              stdout=subprocess.PIPE,
+                                              stderr=subprocess.PIPE,
+                                              shell=True)
+                        logging.info("alsaloop now running in background")
+                    else:
+                        logging.error("alsaloop process seems to be running already")
+
+                else:
+                    # Not playing: kill client
+                    if self.alsaloopclient is None:
+                        logging.info("No alsaloop client running, doing nothing")
+                    else:
+                        logging.info("Killing alsaloop client, doing nothing")
+                        self.alsaloopclient.kill()
+                        # Wait until it died
+                        _outs, _errs = self.alsaloopclient.communicate()
+                        self.alsaloopclient = None
+
+                # Playback status has changed, now inform DBUS
+                self.update_metadata()
+                self.dbus_service.update_property('org.mpris.MediaPlayer2.Player',
+                                                  'PlaybackStatus')
+
+            # Check if alsaloop is still running
+            if self.alsaloopclient:
+                if self.alsaloopclient.poll() is not None:
+                    logging.warning("snapclient died")
+                    self.playback_status = PLAYBACK_STOPPED
+                    self.alsaloopclient = None
+
+
+            time.sleep(0.2)
+            
+            
     def record_device(self):
         if self.record is not None:
             return self.record
@@ -250,87 +287,6 @@ class ALSALoopWrapper(threading.Thread):
         
         self.playback = out
         return self.playback
-    
-    
-class alsaloopWrapper(threading.Thread):
-    """ Wrapper to handle alsaloopclient
-    """
-
-    def __init__(self, alsaloopserver):
-        super().__init__()
-        self.playerid = None
-        self.playback_status = "stopped"
-        self.metadata = {}
-        self.server = alsaloopserver
-
-        self.dbus_service = None
-
-        self.bus = dbus.SessionBus()
-        self.received_data = False
-
-        self.alsaloopclient = None
-        self.streamname = ""
-
-    def run(self):
-        try:
-            self.dbus_service = MPRISInterface()
-
-            self.mainloop()
-
-        except Exception as e:
-            logging.error("alsaloopwrapper thread exception: %s", e)
-            sys.exit(1)
-
-        logging.error("alsaloopwrapper thread died - this should not happen")
-        sys.exit(1)
-
-    def mainloop_external(self):
-        current_playback_status = None
-        while True:
-            if self.playback_status != current_playback_status:
-                current_playback_status = self.playback_status
-
-                # Changed - do something
-
-                if self.playback_status == PLAYBACK_PLAYING:
-                    if self.alsaloopclient is None:
-                        logging.info("pausing other players")
-                        subprocess.run(["/opt/hifiberry/bin/pause-all", "alsaloop"])
-                        logging.info("starting alsaloop")
-                        self.alsaloopclient = \
-                            subprocess.Popen("/bin/alsaloop -P default -r i48000 -f S32_LE -t 100000 -S 1",
-                                              stdout=subprocess.PIPE,
-                                              stderr=subprocess.PIPE,
-                                              shell=True)
-                        logging.info("alsaloop now running in background")
-                    else:
-                        logging.error("alsaloop process seems to be running already")
-
-                else:
-                    # Not playing: kill client
-                    if self.alsaloopclient is None:
-                        logging.info("No alsaloop client running, doing nothing")
-                    else:
-                        logging.info("Killing alsaloop client, doing nothing")
-                        self.alsaloopclient.kill()
-                        # Wait until it died
-                        _outs, _errs = self.alsaloopclient.communicate()
-                        self.alsaloopclient = None
-
-                # Playback status has changed, now inform DBUS
-                self.update_metadata()
-                self.dbus_service.update_property('org.mpris.MediaPlayer2.Player',
-                                                  'PlaybackStatus')
-
-            # Check if alsaloop is still running
-            if self.alsaloopclient:
-                if self.alsaloopclient.poll() is not None:
-                    logging.warning("snapclient died")
-                    self.playback_status = PLAYBACK_STOPPED
-                    self.alsaloopclient = None
-
-
-            time.sleep(0.2)
 
 
 
@@ -405,7 +361,7 @@ class alsaloopWrapper(threading.Thread):
     def update_metadata(self):
         if self.alsaloopclient is not None:
             self.metadata["xesam:url"] = \
-                "alsaloop://{}/{}".format(self.server, self.streamname)
+                "alsaloop://"
 
         self.dbus_service.update_property('org.mpris.MediaPlayer2.Player',
                                                   'Metadata')
@@ -585,7 +541,7 @@ def parse_config(debugmode=False):
     alsaloopWrapper = ALSALoopWrapper()
 
     # Auto start for alsaloop
-    if config.getboolean("alsaloop", "autostart", fallback=True):
+    if config.getboolean("alsaloop", "autostart", fallback=False):
         alsaloopWrapper.playback_status = PLAYBACK_PLAYING
 
     return alsaloopWrapper
