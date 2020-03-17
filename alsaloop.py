@@ -24,60 +24,129 @@ SOFTWARE.
 #!/usr/bin/env python
 
 import sys
-import time
+import logging
+from math import sqrt, log
+from struct import unpack_from
+import os
+
 import alsaaudio
 
-def usage():
-    print('usage: recordtest.py [-d <device>] <file>', file=sys.stderr)
-    sys.exit(2)
+stopped = True
+threshold = 20
+
+SAMPLE_MAXVAL = 32768
+
+
+def open_sound(output=False):
+    
+    inp = alsaaudio.PCM(alsaaudio.PCM_CAPTURE, alsaaudio.PCM_NONBLOCK, device=device)
+    inp.setchannels(2)
+    inp.setrate(48000)
+    inp.setformat(alsaaudio.PCM_FORMAT_S16_LE)
+    inp.setperiodsize(1024)
+    
+    if output:
+        out = alsaaudio.PCM(alsaaudio.PCM_PLAYBACK, alsaaudio.PCM_NONBLOCK, device=device)
+        out.setchannels(2)
+        out.setrate(48000)
+        out.setformat(alsaaudio.PCM_FORMAT_S16_LE)
+        return(inp, out)
+    
+    else:
+        return inp
+    
+def decibel(value):
+    return 20*log(value/SAMPLE_MAXVAL)
+        
+def stop_playback(_signalNumber, _frame):
+    logging.info("received USR1, stopping music playback")
+    stopped = True
 
 if __name__ == '__main__':
-
+    
+    dbthreshold = 0
+    try: 
+        dbthreshold = float(sys.argv[1])
+        if dbthreshold > 0:
+            dbthreshold = -dbthreshold
+        print("using alsaloop witht input level detection {:.1f}".format(dbthreshold))
+    except:
+        print("using alsaloop without input level detection")
+        
     device = 'default'
+    
+    inp = open_sound(output=False)
+    
+    finished = False
+    
+    rmssamples = 11050
+    samples = 0
+    samplesum = 0
+    max_sample = 0
+    status = "-"
+    rms = 0
+    playing = False
 
-    # Open the device in nonblocking capture mode. The last argument could
-    # just as well have been zero for blocking mode. Then we could have
-    # left out the sleep call in the bottom of the loop
-    inp = alsaaudio.PCM(alsaaudio.PCM_CAPTURE, alsaaudio.PCM_NONBLOCK, device=device)
-
-    # Set attributes: Stereo, 44100 Hz, 16 bit little endian samples
-    inp.setchannels(2)
-    inp.setrate(44100)
-    inp.setformat(alsaaudio.PCM_FORMAT_S16_LE)
-
-
-    # Open the device in playback mode.
-    out = alsaaudio.PCM(alsaaudio.PCM_PLAYBACK, device=device)
-
-    # Set attributes:Stereo, 44100 Hz, 16 bit little endian frames
-    out.setchannels(2)
-    out.setrate(44100)
-    out.setformat(alsaaudio.PCM_FORMAT_S16_LE)
-
-    # The period size controls the internal number of frames per period.
-    # The significance of this parameter is documented in the ALSA api.
-    out.setperiodsize(1024)
-
-
-    # The period size controls the internal number of frames per period.
-    # The significance of this parameter is documented in the ALSA api.
-    # For our purposes, it is suficcient to know that reads from the device
-    # will return this many frames. Each frame being 2 bytes long.
-    # This means that the reads below will return either 320 bytes of data
-    # or 0 bytes of data. The latter is possible because we are in nonblocking
-    # mode.
-    inp.setperiodsize(1024)
-
-    loops = 1000000
-    while loops > 0:
-        loops -= 1
+    while not(finished):
         # Read data from device
         l, data = inp.read()
+        if l<0:
+            logging.error("?")
+            continue
+        
+        #logging.error("%s %s %s",l,len(data),samples)
         
         if (len(data) % 4) != 0:
                 print("oops %s".format(len(data)))
+                continue
+            
+        offset = 0
+        while offset < l: 
+            try:
+                (sample_l,sample_r) = unpack_from('<hh', data, offset=offset)
+            except:
+                # logging.error("%s %s %s",l,len(data), offset)
+                pass
+            offset += 4
+            samples += 2
+            samplesum += sample_l*sample_l + sample_r*sample_r
+            max_sample = max(max_sample, abs(sample_l), abs(sample_r))
+    
+        if samples >= rmssamples:        
+            # Calculate RMS
+            rms = sqrt(samplesum/samples)
+        
+            if dbthreshold == 0 or decibel(max_sample) > dbthreshold:
+                playing = True
+                status="P"
+            else:
+                playing = False
+                status="-"
 
-        if l:
-            print(l)
-            out.write(data)
-            time.sleep(.001)
+            print("{} {:.1f} {:.1f}".format(status, decibel(rms), decibel(max_sample)))
+                  
+            samplesum = 0
+            samples = 0
+            max_sample = 0 
+
+            
+            if stopped==True and playing:
+
+                inp = None
+                logging.info("Input signal detected, pausing other players")
+                os.system("/opt/hifiberry/bin/pause-all alsaloop")
+                (inp, outp) = open_sound(output=True)
+                stopped = False
+                continue
+                
+            elif stopped == False and not(playing):
+                outp = None
+                logging.info("Input signal lost, stopping playback")
+                del outp
+                del inp
+                inp = open_sound(output=False)
+                stopped = True
+                continue
+            
+        if not(stopped):
+            outp.write(data)
