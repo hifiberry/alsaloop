@@ -428,7 +428,7 @@ def stop_alsaloop(_signalNumber, _frame):
 
 
 def reconfigure_alsaloop(_signalNumber, _frame):
-    logging.info("received HUP, recofniguring alsaloop")
+    logging.info("received HUP, reconfiguring alsaloop")
     parse_config(alsaloop_wrapper)
 
 
@@ -459,7 +459,7 @@ if __name__ == '__main__':
     loop = GLib.MainLoop()
 
     signal.signal(signal.SIGUSR1, stop_alsaloop)
-    signal.signal(signal.SIGHUP, stop_alsaloop)
+    signal.signal(signal.SIGHUP, reconfigure_alsaloop)
 
     server = "192.168.30.110"
 
