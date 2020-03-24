@@ -30,18 +30,13 @@ import threading
 import fcntl
 import os
 import subprocess
-import json
 import signal
 import configparser
-import struct
-import math
 
 import dbus.service
 from dbus.mainloop.glib import DBusGMainLoop
 
-from alsaaudio import \
-    pcms, cards, PCM, PCM_PLAYBACK, PCM_CAPTURE, PCM_NORMAL, PCM_NONBLOCK, \
-    PCM_FORMAT_S16_LE, PCM_FORMAT_S32_LE
+alsaloopWrapper = None
 
 
 try:
@@ -183,14 +178,12 @@ class ALSALoopWrapper(threading.Thread):
         
         self.auto_start = auto_start
 
-        self.pcmformat = PCM_FORMAT_S16_LE
-        self.buffersize = 512
-        self.samplerate = 48000
-        
         self.playback = None
         self.record = None
         
         self.alsaloopclient = None
+        
+        self.alsaloopdb = 60
 
     def run(self):
         try:
@@ -208,155 +201,110 @@ class ALSALoopWrapper(threading.Thread):
     def mainloop_external(self):
         current_playback_status = None
         while True:
-            if self.playback_status != current_playback_status:
-                current_playback_status = self.playback_status
-
-                # Changed - do something
-
-                if self.playback_status == PLAYBACK_PLAYING:
-                    if self.alsaloopclient is None:
-                        logging.info("pausing other players")
-                        subprocess.run(["/opt/hifiberry/bin/pause-all", "alsaloop"])
-                        logging.info("starting alsaloop")
-                        self.alsaloopclient = \
-                            subprocess.Popen("/bin/alsaloop -P default -r 48000 -f S32_LE -t 100000 -S 1",
-                                              stdout=subprocess.PIPE,
-                                              stderr=subprocess.PIPE,
-                                              shell=True)
-                        logging.info("alsaloop now running in background")
-                    else:
-                        logging.error("alsaloop process seems to be running already")
-
-                else:
-                    # Not playing: kill client
-                    if self.alsaloopclient is None:
-                        logging.info("No alsaloop client running, doing nothing")
-                    else:
-                        logging.info("Killing alsaloop client, doing nothing")
-                        self.alsaloopclient.kill()
-                        # Wait until it died
-                        _outs, _errs = self.alsaloopclient.communicate()
-                        self.alsaloopclient = None
-
-                # Playback status has changed, now inform DBUS
-                self.update_metadata()
-                self.dbus_service.update_property('org.mpris.MediaPlayer2.Player',
-                                                  'PlaybackStatus')
+            
+            if self.alsaloopclient is None:
+                cmdline = "python /opt/alsaloop/alsaloop.py {}".format(self.alsaloopdb)
+                logging.info("starting %s",cmdline)
+                self.alsaloopclient = \
+                    subprocess.Popen(cmdline,
+                                        bufsize=1,
+                                        stdout=subprocess.PIPE,
+                                        shell=True,
+                                        universal_newlines=True,
+                                        encoding="utf-8",
+                                        text=True)
+                logging.info("alsaloop now running in background")
 
             # Check if alsaloop is still running
             if self.alsaloopclient:
                 if self.alsaloopclient.poll() is not None:
-                    logging.warning("snapclient died")
+                    logging.warning("alsaloop died")
                     self.playback_status = PLAYBACK_STOPPED
                     self.alsaloopclient = None
+                    continue
+                    
+            line = self.alsaloopclient.stdout.readline()
 
-
-            time.sleep(0.2)
-            
-            
-    def record_device(self):
-        if self.record is not None:
-            return self.record
-        
-        inp = PCM(PCM_CAPTURE, PCM_NONBLOCK, device="sysdefault:CARD=sndrpihifiberry")
-
-        # Set attributes: Stereo, 44100 Hz, 16 bit little endian samples
-        inp.setchannels(2)
-        inp.setrate(44100)
-        inp.setformat(PCM_FORMAT_S16_LE)
-        inp.setperiodsize(1024)
-
-        self.record = inp
-    
-        return self.record
-
-    def playback_device(self):
-        if self.playback is not None:
-            return self.playback
-
-        out = PCM(PCM_PLAYBACK, device="sysdefault:CARD=sndrpihifiberry")
-
-        # Set attributes:Stereo, 44100 Hz, 16 bit little endian frames
-        out.setchannels(2)
-        out.setrate(44100)
-        out.setformat(PCM_FORMAT_S16_LE)
-
-        # The period size controls the internal number of frames per period.
-        # The significance of this parameter is documented in the ALSA api.
-        out.setperiodsize(1024)        
-        
-        self.playback = out
-        return self.playback
-
-
-
-    def mainloop(self, detect_threshold=300):
-        """ 
-        This is not yet working as the alsaudio stuff doesn't seem to work stable 
-        in a background thread
-        """
-        
-        current_playback_status = None
-        finished = False
-        signal_detected = False
-
-        record = self.record_device()
-
-        while not finished:
-            
-            if signal_detected and self.auto_start:
-                self.playback_status = PLAYBACK_PLAYING
-            
-            if not(signal_detected):
-                self.playback_status = PLAYBACK_STOPPED
-                
-            self.playback_status = PLAYBACK_PLAYING
-            
-            if self.playback_status != current_playback_status:
-                logging.error("playback status changed from %s to %s",
-                             current_playback_status, self.playback_status)
-                if self.playback_status == PLAYBACK_PLAYING:
-                    logging.error("opening playback device")
-                    playback = self.playback_device()
-                    logging.error("opened playback device")
-                else:
-                    playback = None
-            else:
-                logging.debug("playback status unchanged")
-            current_playback_status = self.playback_status
-
-            size, data = record.read()
-            if not(size):
-                time.sleep(0.001);
-                continue
-
-            if (len(data) % 4) != 0:
-                logging.error("oops %s", len(data))
-            
-            # do something with the data
-#             i = 0
-#             rms = 0
-#             while i < len(data):
-#                 l, r = struct.unpack_from("<hh", data, i)
-#                 rms = rms + l * l + r * r
-#                 i += 4
-#                 if abs(l) > detect_threshold or abs(r) > detect_threshold:
-#                     signal_detected = True
-# 
-#             rms = math.sqrt(rms / self.buffersize)
-            
-            # DEBUGGING ONLY
-                        
-
-            if self.playback_status == PLAYBACK_PLAYING:
-                try:
-                    playback.write(data)
-                except Exception as e:
-                    logging.exception(e)
-                    logging.warning("could not write output to sound card, stopping")
+            logging.error("l: %s", line)
+            parts=line.split(" ")
+            if len(parts)>2:
+                if parts[0].lower()=="p":
+                    self.playback_status = PLAYBACK_PLAYING
+                elif parts[0]=="-":
                     self.playback_status = PLAYBACK_STOPPED
                     
-            time.sleep(.001)
+                # Ignore decibel for the moment
+                #try:
+                #    db = float(parts[1])
+                #except:
+                #    db = 0
+            
+            # Playback status has changed, now inform DBUS
+            self.update_metadata()
+            self.dbus_service.update_property('org.mpris.MediaPlayer2.Player',
+                                                  'PlaybackStatus')
+
+
+            
+    def reconfigure(self):
+        if self.alsaloopclient is not None:
+            self.alsaloopclient.kill()
+            self.alsaloopclient = None
+            
+
+#     def mainloop(self):
+#         """ 
+#         This is not yet working as the alsaudio stuff doesn't seem to work stable 
+#         in a background thread
+#         """
+#         
+#         current_playback_status = None
+#         finished = False
+#         signal_detected = False
+# 
+#         record = self.record_device()
+# 
+#         while not finished:
+#             
+#             if signal_detected and self.auto_start:
+#                 self.playback_status = PLAYBACK_PLAYING
+#             
+#             if not(signal_detected):
+#                 self.playback_status = PLAYBACK_STOPPED
+#                 
+#             self.playback_status = PLAYBACK_PLAYING
+#             
+#             if self.playback_status != current_playback_status:
+#                 logging.error("playback status changed from %s to %s",
+#                              current_playback_status, self.playback_status)
+#                 if self.playback_status == PLAYBACK_PLAYING:
+#                     logging.error("opening playback device")
+#                     playback = self.playback_device()
+#                     logging.error("opened playback device")
+#                 else:
+#                     playback = None
+#             else:
+#                 logging.debug("playback status unchanged")
+#             current_playback_status = self.playback_status
+# 
+#             size, data = record.read()
+#             if not(size):
+#                 time.sleep(0.001);
+#                 continue
+# 
+#             if (len(data) % 4) != 0:
+#                 logging.error("oops %s", len(data))
+#             
+# 
+#             if self.playback_status == PLAYBACK_PLAYING:
+#                 try:
+#                     playback.write(data)
+#                 except Exception as e:
+#                     logging.exception(e)
+#                     logging.warning("could not write output to sound card, stopping")
+#                     self.playback_status = PLAYBACK_STOPPED
+#                     
+#             time.sleep(.001)
 
     def update_metadata(self):
         if self.alsaloopclient is not None:
@@ -525,12 +473,17 @@ class MPRISInterface(dbus.service.Object):
         return
 
 
-def stopalsaloop(signalNumber, frame):
+def stop_alsaloop(_signalNumber, _frame):
     logging.info("received USR1, stopping alsaloop")
     alsaloop_wrapper.playback_status = PLAYBACK_STOPPED
 
 
-def parse_config(debugmode=False):
+def reconfigure_alsaloop(_signalNumber, _frame):
+    logging.info("received HUP, recofniguring alsaloop")
+    parse_config(alsaloop_wrapper)
+
+
+def parse_config(alsaloop_wrapper, debugmode=False):
     config = configparser.ConfigParser()
     try:
         config.read("/etc/alsaloop.conf")
@@ -538,13 +491,9 @@ def parse_config(debugmode=False):
     except:
         pass
     
-    alsaloopWrapper = ALSALoopWrapper()
-
     # Auto start for alsaloop
     if config.getboolean("alsaloop", "autostart", fallback=False):
         alsaloopWrapper.playback_status = PLAYBACK_PLAYING
-
-    return alsaloopWrapper
 
 
 if __name__ == '__main__':
@@ -562,13 +511,15 @@ if __name__ == '__main__':
     # Set up the main loop
     loop = GLib.MainLoop()
 
-    signal.signal(signal.SIGUSR1, stopalsaloop)
+    signal.signal(signal.SIGUSR1, stop_alsaloop)
+    signal.signal(signal.SIGHUP, stop_alsaloop)
 
     server = "192.168.30.110"
 
-    # Create wrapper to handle connection failures with MPD more gracefully
+    # Create wrapper to manages the alsaloop child process
     try:
-        alsaloop_wrapper = parse_config()
+        alsaloop_wrapper = ALSALoopWrapper()
+        parse_config(alsaloop_wrapper)
         alsaloop_wrapper.start()
         logging.info("alsaloop wrapper thread started")
     except dbus.exceptions.DBusException as e:
