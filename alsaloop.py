@@ -56,7 +56,7 @@ def open_sound(output=False):
         return inp
     
 def decibel(value):
-    return 20*log(value/SAMPLE_MAXVAL)
+    return 20*log(value/SAMPLE_MAXVAL, 10)
         
 def stop_playback(_signalNumber, _frame):
     logging.info("received USR1, stopping music playback")
@@ -123,7 +123,7 @@ if __name__ == '__main__':
                 playing = False
                 status="-"
 
-            print("{} {:.1f} {:.1f}".format(status, decibel(rms), decibel(max_sample)))
+            print("{} {:.1f} {:.1f}".format(status, decibel(rms), decibel(max_sample)),flush = True)
                   
             samplesum = 0
             samples = 0
