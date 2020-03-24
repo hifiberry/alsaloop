@@ -27,14 +27,14 @@ import sys
 import logging
 import time
 import threading
-import fcntl
 import os
 import subprocess
 import signal
-import configparser
+import json
 
 import dbus.service
 from dbus.mainloop.glib import DBusGMainLoop
+import alsaloop
 
 alsaloopWrapper = None
 
@@ -183,7 +183,7 @@ class ALSALoopWrapper(threading.Thread):
         
         self.alsaloopclient = None
         
-        self.alsaloopdb = 60
+        self.alsaloopdb = 0
 
     def run(self):
         try:
@@ -225,8 +225,8 @@ class ALSALoopWrapper(threading.Thread):
                     
             line = self.alsaloopclient.stdout.readline()
 
-            logging.error("l: %s", line)
             parts=line.split(" ")
+            pbstatus_old = self.playback_status
             if len(parts)>2:
                 if parts[0].lower()=="p":
                     self.playback_status = PLAYBACK_PLAYING
@@ -238,6 +238,9 @@ class ALSALoopWrapper(threading.Thread):
                 #    db = float(parts[1])
                 #except:
                 #    db = 0
+                
+            if self.playback_status != pbstatus_old:
+                logging.info("playback status changed from %s to %s",pbstatus_old, self.playback_status)
             
             # Playback status has changed, now inform DBUS
             self.update_metadata()
@@ -250,62 +253,8 @@ class ALSALoopWrapper(threading.Thread):
         if self.alsaloopclient is not None:
             self.alsaloopclient.kill()
             self.alsaloopclient = None
+            self.playback_status=PLAYBACK_UNKNOWN
             
-
-#     def mainloop(self):
-#         """ 
-#         This is not yet working as the alsaudio stuff doesn't seem to work stable 
-#         in a background thread
-#         """
-#         
-#         current_playback_status = None
-#         finished = False
-#         signal_detected = False
-# 
-#         record = self.record_device()
-# 
-#         while not finished:
-#             
-#             if signal_detected and self.auto_start:
-#                 self.playback_status = PLAYBACK_PLAYING
-#             
-#             if not(signal_detected):
-#                 self.playback_status = PLAYBACK_STOPPED
-#                 
-#             self.playback_status = PLAYBACK_PLAYING
-#             
-#             if self.playback_status != current_playback_status:
-#                 logging.error("playback status changed from %s to %s",
-#                              current_playback_status, self.playback_status)
-#                 if self.playback_status == PLAYBACK_PLAYING:
-#                     logging.error("opening playback device")
-#                     playback = self.playback_device()
-#                     logging.error("opened playback device")
-#                 else:
-#                     playback = None
-#             else:
-#                 logging.debug("playback status unchanged")
-#             current_playback_status = self.playback_status
-# 
-#             size, data = record.read()
-#             if not(size):
-#                 time.sleep(0.001);
-#                 continue
-# 
-#             if (len(data) % 4) != 0:
-#                 logging.error("oops %s", len(data))
-#             
-# 
-#             if self.playback_status == PLAYBACK_PLAYING:
-#                 try:
-#                     playback.write(data)
-#                 except Exception as e:
-#                     logging.exception(e)
-#                     logging.warning("could not write output to sound card, stopping")
-#                     self.playback_status = PLAYBACK_STOPPED
-#                     
-#             time.sleep(.001)
-
     def update_metadata(self):
         if self.alsaloopclient is not None:
             self.metadata["xesam:url"] = \
@@ -484,17 +433,15 @@ def reconfigure_alsaloop(_signalNumber, _frame):
 
 
 def parse_config(alsaloop_wrapper, debugmode=False):
-    config = configparser.ConfigParser()
     try:
-        config.read("/etc/alsaloop.conf")
-        logging.info("read /etc/alsaloop.conf")
+        with open('/etc/alsaloop.json') as json_file:
+            data = json.load(json_file)
+            alsaloop_wrapper.alsaloopdb = data["sensitivity"]
     except:
-        pass
+        logging.info("couldn't read /etc/alsaloop.json, using default configuration")
+        
+    alsaloop_wrapper.reconfigure()
     
-    # Auto start for alsaloop
-    if config.getboolean("alsaloop", "autostart", fallback=False):
-        alsaloopWrapper.playback_status = PLAYBACK_PLAYING
-
 
 if __name__ == '__main__':
     DBusGMainLoop(set_as_default=True)
