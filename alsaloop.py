@@ -38,115 +38,124 @@ SAMPLE_MAXVAL = 32768
 
 
 def open_sound(output=False):
-    
-    inp = alsaaudio.PCM(alsaaudio.PCM_CAPTURE, alsaaudio.PCM_NONBLOCK, device=device)
-    inp.setchannels(2)
-    inp.setrate(48000)
-    inp.setformat(alsaaudio.PCM_FORMAT_S16_LE)
-    inp.setperiodsize(1024)
-    
+
+    input_device = alsaaudio.PCM(alsaaudio.PCM_CAPTURE, alsaaudio.PCM_NONBLOCK, device=device)
+    input_device.setchannels(2)
+    input_device.setrate(48000)
+    input_device.setformat(alsaaudio.PCM_FORMAT_S16_LE)
+    input_device.setperiodsize(1024)
+
     if output:
-        out = alsaaudio.PCM(alsaaudio.PCM_PLAYBACK, alsaaudio.PCM_NONBLOCK, device=device)
-        out.setchannels(2)
-        out.setrate(48000)
-        out.setformat(alsaaudio.PCM_FORMAT_S16_LE)
-        return(inp, out)
-    
+        output_device = alsaaudio.PCM(alsaaudio.PCM_PLAYBACK, alsaaudio.PCM_NONBLOCK, device=device)
+        output_device.setchannels(2)
+        output_device.setrate(48000)
+        output_device.setformat(alsaaudio.PCM_FORMAT_S16_LE)
+        return(input_device, output_device)
+
     else:
-        return inp
-    
+        return input_device
+
 def decibel(value):
     return 20*log(value/SAMPLE_MAXVAL, 10)
-        
+
 def stop_playback(_signalNumber, _frame):
     logging.info("received USR1, stopping music playback")
     stopped = True
 
 if __name__ == '__main__':
-    
+
     dbthreshold = 0
-    try: 
+    try:
         dbthreshold = float(sys.argv[1])
         if dbthreshold > 0:
             dbthreshold = -dbthreshold
         print("using alsaloop witht input level detection {:.1f}".format(dbthreshold))
     except:
         print("using alsaloop without input level detection")
-        
+
     device = 'default'
-    
-    inp = open_sound(output=False)
-    
+
+    input_device = open_sound(output=False)
+
     finished = False
-    
-    rmssamples = 11050
+
+    # This is the number of samples we want before checking if audio should be turned on or off.
+    target_sample_count = 11050
+
     samples = 0
     samplesum = 0
     max_sample = 0
     status = "-"
     rms = 0
-    playing = False
+    input_detected = False
 
-    while not(finished):
+    while not finished:
         # Read data from device
-        l, data = inp.read()
-        if l<0:
+        data_length, data = input_device.read()
+
+        if data_length < 0:
+            # Something's wrong when this happens. Just try to read again.
             logging.error("?")
             continue
-        
-        #logging.error("%s %s %s",l,len(data),samples)
-        
+
         if (len(data) % 4) != 0:
-                print("oops %s".format(len(data)))
-                continue
-            
+            # Additional sanity test: If the length isn't a multiple of 4, something's wrong
+            print("oops %s".format(len(data)))
+            continue
+
         offset = 0
-        while offset < l: 
+        # Read through the currently captured audio data
+        while offset < data_length:
             try:
+                # Read the left and right channel from the data packet
                 (sample_l,sample_r) = unpack_from('<hh', data, offset=offset)
             except:
                 # logging.error("%s %s %s",l,len(data), offset)
-                pass
+                # Set a default value of zero so the program can keep running
+                (sample_l, sample_r) = (0, 0)
+
             offset += 4
             samples += 2
+            # Calculate the sum of all samples squared, used to determine rms later.
             samplesum += sample_l*sample_l + sample_r*sample_r
+            # Determine the max value of all samples
             max_sample = max(max_sample, abs(sample_l), abs(sample_r))
-    
-        if samples >= rmssamples:        
+
+        if samples >= target_sample_count:
             # Calculate RMS
             rms = sqrt(samplesum/samples)
-        
+
+            # Check if the threshold has been exceeded
             if dbthreshold == 0 or decibel(max_sample) > dbthreshold:
-                playing = True
+                input_detected = True
                 status="P"
             else:
-                playing = False
+                input_detected = False
                 status="-"
 
             print("{} {:.1f} {:.1f}".format(status, decibel(rms), decibel(max_sample)),flush = True)
-                  
+
             samplesum = 0
             samples = 0
-            max_sample = 0 
+            max_sample = 0
 
-            
-            if stopped==True and playing:
 
-                inp = None
+            if stopped==True and input_detected:
+                input_device = None
                 logging.info("Input signal detected, pausing other players")
                 os.system("/opt/hifiberry/bin/pause-all alsaloop")
-                (inp, outp) = open_sound(output=True)
+                (input_device, output_device) = open_sound(output=True)
                 stopped = False
                 continue
-                
-            elif stopped == False and not(playing):
-                outp = None
+
+            elif stopped == False and not(input_detected):
+                output_device = None
                 logging.info("Input signal lost, stopping playback")
-                del outp
-                del inp
-                inp = open_sound(output=False)
+                del output_device
+                del input_device
+                input_device = open_sound(output=False)
                 stopped = True
                 continue
-            
+
         if not(stopped):
-            outp.write(data)
+            output_device.write(data)
