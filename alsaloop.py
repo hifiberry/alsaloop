@@ -67,12 +67,27 @@ def stop_playback(_signalNumber, _frame):
 
 if __name__ == '__main__':
 
-    db_threshold = 0
+    start_db_threshold = 0
+    stop_db_threshold = 0
     try:
-        db_threshold = float(sys.argv[1])
-        if db_threshold > 0:
-            db_threshold = -db_threshold
-        print("using alsaloop witht input level detection {:.1f}".format(db_threshold))
+        start_db_threshold = float(sys.argv[1])
+        if start_db_threshold > 0:
+            start_db_threshold = -start_db_threshold
+
+        # Define the stop threshold. This prevents hysteresis when the volume fluctuates just around the threshold.
+        if len(sys.argv) > 2:
+            stop_db_threshold = float(sys.argv[2])
+            if stop_db_threshold > 0:
+                stop_db_threshold = -stop_db_threshold
+            # The threshold to stop playing should be lower than the threshold to start playing
+            stop_db_threshold = min(start_db_threshold, stop_db_threshold, start_db_threshold * .90)
+        else:
+            # If the stop threshold is not defined, use 90% of the start threshold.
+            # This means the audio volume has to drop 10% after starting to play before playback will be stopped.
+            stop_db_threshold = start_db_threshold * .90
+
+        print("using alsaloop with input level detection {:.1f} to start, {:.1f} to stop"
+              .format(start_db_threshold, stop_db_threshold))
     except:
         print("using alsaloop without input level detection")
 
@@ -127,8 +142,14 @@ if __name__ == '__main__':
             # Calculate RMS
             rms_volume = sqrt(sample_sum / samples)
 
+            # Determine which threshold value to use
+            if output_stopped:
+                threshold = start_db_threshold
+            else:
+                threshold = stop_db_threshold
+
             # Check if the threshold has been exceeded
-            if db_threshold == 0 or decibel(max_sample) > db_threshold:
+            if start_db_threshold == 0 or decibel(max_sample) > threshold:
                 input_detected = True
                 status = "P"
             else:
