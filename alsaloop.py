@@ -60,23 +60,25 @@ def decibel(value):
 
 
 def stop_playback(_signalNumber, _frame):
+    global output_stopped
     logging.info("received USR1, stopping music playback")
-    stopped = True
+    output_stopped = True
 
 
 if __name__ == '__main__':
 
-    dbthreshold = 0
+    db_threshold = 0
     try:
-        dbthreshold = float(sys.argv[1])
-        if dbthreshold > 0:
-            dbthreshold = -dbthreshold
-        print("using alsaloop witht input level detection {:.1f}".format(dbthreshold))
+        db_threshold = float(sys.argv[1])
+        if db_threshold > 0:
+            db_threshold = -db_threshold
+        print("using alsaloop witht input level detection {:.1f}".format(db_threshold))
     except:
         print("using alsaloop without input level detection")
 
     device = 'default'
     input_device = open_sound(output=False)
+    output_device = None
     finished = False
 
     # This is the number of samples we want before checking if audio should be turned on or off.
@@ -126,7 +128,7 @@ if __name__ == '__main__':
             rms_volume = sqrt(sample_sum / samples)
 
             # Check if the threshold has been exceeded
-            if dbthreshold == 0 or decibel(max_sample) > dbthreshold:
+            if db_threshold == 0 or decibel(max_sample) > db_threshold:
                 input_detected = True
                 status = "P"
             else:
@@ -140,7 +142,7 @@ if __name__ == '__main__':
             max_sample = 0
 
             if output_stopped and input_detected:
-                input_device = None
+                del input_device
                 logging.info("Input signal detected, pausing other players")
                 os.system("/opt/hifiberry/bin/pause-all alsaloop")
                 (input_device, output_device) = open_sound(output=True)
@@ -148,10 +150,9 @@ if __name__ == '__main__':
                 continue
 
             elif not output_stopped and not input_detected:
+                del input_device
                 output_device = None
                 logging.info("Input signal lost, stopping playback")
-                del output_device
-                del input_device
                 input_device = open_sound(output=False)
                 output_stopped = True
                 continue
