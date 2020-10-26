@@ -32,22 +32,36 @@ import os
 import alsaaudio
 
 output_stopped = True
-threshold = 20
 
+# The maximum value which can be read from the input device (in other words, the value for maximum volume)
 SAMPLE_MAXVAL = 32768
+
+CHANNELS = 2
+# Sample rate in samples per second
+SAMPLE_RATE = 48000
+PERIOD_SIZE = 1024
+# The duration of a measurement interval (after which the thresholds will be checked) in seconds.
+SAMPLE_SECONDS_BEFORE_CHECK = 0.5
+# The number of samples before each check
+SAMPLE_COUNT_BEFORE_CHECK = int(SAMPLE_RATE * SAMPLE_SECONDS_BEFORE_CHECK)
+# The time during which the input threshold hasn't been reached, before output is stopped.
+# This is useful for preventing the output device from turning off and on when there is a short silence in the input.
+SAMPLE_SECONDS_BEFORE_TURN_OFF = 15
+# The number of checks which have to fail before audio is turned off.
+CHECK_NUMBER_BEFORE_TURN_OFF = int(SAMPLE_SECONDS_BEFORE_TURN_OFF / SAMPLE_COUNT_BEFORE_CHECK)
 
 
 def open_sound(output=False):
     input_device = alsaaudio.PCM(alsaaudio.PCM_CAPTURE, alsaaudio.PCM_NONBLOCK, device=device)
-    input_device.setchannels(2)
-    input_device.setrate(48000)
+    input_device.setchannels(CHANNELS)
+    input_device.setrate(SAMPLE_RATE)
     input_device.setformat(alsaaudio.PCM_FORMAT_S16_LE)
-    input_device.setperiodsize(1024)
+    input_device.setperiodsize(PERIOD_SIZE)
 
     if output:
         output_device = alsaaudio.PCM(alsaaudio.PCM_PLAYBACK, alsaaudio.PCM_NONBLOCK, device=device)
-        output_device.setchannels(2)
-        output_device.setrate(48000)
+        output_device.setchannels(CHANNELS)
+        output_device.setrate(SAMPLE_RATE)
         output_device.setformat(alsaaudio.PCM_FORMAT_S16_LE)
         return input_device, output_device
 
@@ -81,15 +95,15 @@ if __name__ == '__main__':
     output_device = None
     finished = False
 
-    # This is the number of samples we want before checking if audio should be turned on or off.
-    target_sample_count = 11050
-
     samples = 0
     sample_sum = 0
     max_sample = 0
     status = "-"
     rms_volume = 0
     input_detected = False
+
+    # Counter for subsequent intervals in which the threshold has not been met while playback is active
+    count_playback_threshold_not_met = 0
 
     while not finished:
         # Read data from device
@@ -123,7 +137,7 @@ if __name__ == '__main__':
             # Determine the max value of all samples
             max_sample = max(max_sample, abs(sample_l), abs(sample_r))
 
-        if samples >= target_sample_count:
+        if samples >= SAMPLE_COUNT_BEFORE_CHECK:
             # Calculate RMS
             rms_volume = sqrt(sample_sum / samples)
 
@@ -150,12 +164,19 @@ if __name__ == '__main__':
                 continue
 
             elif not output_stopped and not input_detected:
-                del input_device
-                output_device = None
-                logging.info("Input signal lost, stopping playback")
-                input_device = open_sound(output=False)
-                output_stopped = True
-                continue
+                count_playback_threshold_not_met += 1
+                logging.info(f"No input signal for {count_playback_threshold_not_met} intervals")
+                if count_playback_threshold_not_met > CHECK_NUMBER_BEFORE_TURN_OFF:
+                    del input_device
+                    output_device = None
+                    logging.info("Input signal lost, stopping playback")
+                    input_device = open_sound(output=False)
+                    output_stopped = True
+                    continue
+
+            if input_detected:
+                # Reset counter when input detected
+                count_playback_threshold_not_met = 0
 
         if not output_stopped:
             output_device.write(data)
