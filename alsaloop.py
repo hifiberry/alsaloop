@@ -21,7 +21,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 '''
 
-#!/usr/bin/env python
+# !/usr/bin/env python
 
 import sys
 import logging
@@ -31,14 +31,13 @@ import os
 
 import alsaaudio
 
-stopped = True
+output_stopped = True
 threshold = 20
 
 SAMPLE_MAXVAL = 32768
 
 
 def open_sound(output=False):
-
     input_device = alsaaudio.PCM(alsaaudio.PCM_CAPTURE, alsaaudio.PCM_NONBLOCK, device=device)
     input_device.setchannels(2)
     input_device.setrate(48000)
@@ -50,17 +49,20 @@ def open_sound(output=False):
         output_device.setchannels(2)
         output_device.setrate(48000)
         output_device.setformat(alsaaudio.PCM_FORMAT_S16_LE)
-        return(input_device, output_device)
+        return input_device, output_device
 
     else:
         return input_device
 
+
 def decibel(value):
-    return 20*log(value/SAMPLE_MAXVAL, 10)
+    return 20 * log(value / SAMPLE_MAXVAL, 10)
+
 
 def stop_playback(_signalNumber, _frame):
     logging.info("received USR1, stopping music playback")
     stopped = True
+
 
 if __name__ == '__main__':
 
@@ -74,19 +76,17 @@ if __name__ == '__main__':
         print("using alsaloop without input level detection")
 
     device = 'default'
-
     input_device = open_sound(output=False)
-
     finished = False
 
     # This is the number of samples we want before checking if audio should be turned on or off.
     target_sample_count = 11050
 
     samples = 0
-    samplesum = 0
+    sample_sum = 0
     max_sample = 0
     status = "-"
-    rms = 0
+    rms_volume = 0
     input_detected = False
 
     while not finished:
@@ -108,7 +108,7 @@ if __name__ == '__main__':
         while offset < data_length:
             try:
                 # Read the left and right channel from the data packet
-                (sample_l,sample_r) = unpack_from('<hh', data, offset=offset)
+                (sample_l, sample_r) = unpack_from('<hh', data, offset=offset)
             except:
                 # logging.error("%s %s %s",l,len(data), offset)
                 # Set a default value of zero so the program can keep running
@@ -117,45 +117,44 @@ if __name__ == '__main__':
             offset += 4
             samples += 2
             # Calculate the sum of all samples squared, used to determine rms later.
-            samplesum += sample_l*sample_l + sample_r*sample_r
+            sample_sum += sample_l * sample_l + sample_r * sample_r
             # Determine the max value of all samples
             max_sample = max(max_sample, abs(sample_l), abs(sample_r))
 
         if samples >= target_sample_count:
             # Calculate RMS
-            rms = sqrt(samplesum/samples)
+            rms_volume = sqrt(sample_sum / samples)
 
             # Check if the threshold has been exceeded
             if dbthreshold == 0 or decibel(max_sample) > dbthreshold:
                 input_detected = True
-                status="P"
+                status = "P"
             else:
                 input_detected = False
-                status="-"
+                status = "-"
 
-            print("{} {:.1f} {:.1f}".format(status, decibel(rms), decibel(max_sample)),flush = True)
+            print("{} {:.1f} {:.1f}".format(status, decibel(rms_volume), decibel(max_sample)), flush=True)
 
-            samplesum = 0
+            sample_sum = 0
             samples = 0
             max_sample = 0
 
-
-            if stopped==True and input_detected:
+            if output_stopped and input_detected:
                 input_device = None
                 logging.info("Input signal detected, pausing other players")
                 os.system("/opt/hifiberry/bin/pause-all alsaloop")
                 (input_device, output_device) = open_sound(output=True)
-                stopped = False
+                output_stopped = False
                 continue
 
-            elif stopped == False and not(input_detected):
+            elif not output_stopped and not input_detected:
                 output_device = None
                 logging.info("Input signal lost, stopping playback")
                 del output_device
                 del input_device
                 input_device = open_sound(output=False)
-                stopped = True
+                output_stopped = True
                 continue
 
-        if not(stopped):
+        if not output_stopped:
             output_device.write(data)
