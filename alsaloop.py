@@ -43,7 +43,7 @@ PERIOD_SIZE = 1024
 # The duration of a measurement interval (after which the thresholds will be checked) in seconds.
 SAMPLE_SECONDS_BEFORE_CHECK = 0.5
 # The number of samples before each check
-SAMPLE_COUNT_BEFORE_CHECK = int(SAMPLE_RATE * SAMPLE_SECONDS_BEFORE_CHECK)
+SAMPLE_COUNT_BEFORE_CHECK = int((SAMPLE_RATE / CHANNELS) * SAMPLE_SECONDS_BEFORE_CHECK)
 # The time during which the input threshold hasn't been reached, before output is stopped.
 # This is useful for preventing the output device from turning off and on when there is a short silence in the input.
 SAMPLE_SECONDS_BEFORE_TURN_OFF = 15
