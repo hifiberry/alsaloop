@@ -75,16 +75,9 @@ if __name__ == '__main__':
             start_db_threshold = -start_db_threshold
 
         # Define the stop threshold. This prevents hysteresis when the volume fluctuates just around the threshold.
-        if len(sys.argv) > 2:
-            stop_db_threshold = float(sys.argv[2])
-            if stop_db_threshold > 0:
-                stop_db_threshold = -stop_db_threshold
-            # The threshold to stop playing should be lower than the threshold to start playing
-            stop_db_threshold = min(start_db_threshold, stop_db_threshold, start_db_threshold * .90)
-        else:
-            # If the stop threshold is not defined, use 90% of the start threshold.
-            # This means the audio volume has to drop 10% after starting to play before playback will be stopped.
-            stop_db_threshold = start_db_threshold * .90
+        # 90% of the input threshold means the audio volume has to drop 10% after starting to play before playback
+        # will be stopped.
+        stop_db_threshold = start_db_threshold * .90
 
         print("using alsaloop with input level detection {:.1f} to start, {:.1f} to stop"
               .format(start_db_threshold, stop_db_threshold))
