@@ -33,6 +33,9 @@ import alsaaudio
 
 output_stopped = True
 
+# Which audio device to use
+DEVICE_NAME = 'default'
+
 # The maximum value which can be read from the input device (in other words, the value for maximum volume)
 SAMPLE_MAXVAL = 32768
 
@@ -52,14 +55,14 @@ CHECK_NUMBER_BEFORE_TURN_OFF = int(SAMPLE_SECONDS_BEFORE_TURN_OFF / SAMPLE_COUNT
 
 
 def open_sound(output=False):
-    input_device = alsaaudio.PCM(alsaaudio.PCM_CAPTURE, alsaaudio.PCM_NONBLOCK, device=device)
+    input_device = alsaaudio.PCM(alsaaudio.PCM_CAPTURE, alsaaudio.PCM_NONBLOCK, device=DEVICE_NAME)
     input_device.setchannels(CHANNELS)
     input_device.setrate(SAMPLE_RATE)
     input_device.setformat(alsaaudio.PCM_FORMAT_S16_LE)
     input_device.setperiodsize(PERIOD_SIZE)
 
     if output:
-        output_device = alsaaudio.PCM(alsaaudio.PCM_PLAYBACK, alsaaudio.PCM_NONBLOCK, device=device)
+        output_device = alsaaudio.PCM(alsaaudio.PCM_PLAYBACK, alsaaudio.PCM_NONBLOCK, device=DEVICE_NAME)
         output_device.setchannels(CHANNELS)
         output_device.setrate(SAMPLE_RATE)
         output_device.setformat(alsaaudio.PCM_FORMAT_S16_LE)
@@ -96,7 +99,6 @@ if __name__ == '__main__':
     except:
         print("using alsaloop without input level detection")
 
-    device = 'default'
     input_device = open_sound(output=False)
     output_device = None
     finished = False
