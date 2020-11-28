@@ -44,7 +44,7 @@ CHANNELS = 2
 SAMPLE_RATE = 48000
 PERIOD_SIZE = 1024
 # The duration of a measurement interval (after which the thresholds will be checked) in seconds.
-SAMPLE_SECONDS_BEFORE_CHECK = 0.5
+SAMPLE_SECONDS_BEFORE_CHECK = 0.25
 # The number of samples before each check
 SAMPLE_COUNT_BEFORE_CHECK = int((SAMPLE_RATE / CHANNELS) * SAMPLE_SECONDS_BEFORE_CHECK)
 # The time during which the input threshold hasn't been reached, before output is stopped.
@@ -52,6 +52,8 @@ SAMPLE_COUNT_BEFORE_CHECK = int((SAMPLE_RATE / CHANNELS) * SAMPLE_SECONDS_BEFORE
 SAMPLE_SECONDS_BEFORE_TURN_OFF = 15
 # The number of checks which have to fail before audio is turned off.
 CHECK_NUMBER_BEFORE_TURN_OFF = int(SAMPLE_SECONDS_BEFORE_TURN_OFF / SAMPLE_SECONDS_BEFORE_CHECK)
+# The number of checks which have to pass before audio is turned on.
+CHECK_NUMBER_BEFORE_TURN_ON = 2
 
 
 def open_sound(output=False):
@@ -112,6 +114,8 @@ if __name__ == '__main__':
 
     # Counter for subsequent intervals in which the threshold has not been met while playback is active
     count_playback_threshold_not_met = 0
+    # Counter for subsequent intervals in which the threshold has been met while playback is not active
+    count_playback_threshold_met = 0
 
     while not finished:
         # Read data from device
@@ -170,12 +174,14 @@ if __name__ == '__main__':
             max_sample = 0
 
             if output_stopped and input_detected:
-                del input_device
-                logging.info("Input signal detected, pausing other players")
-                os.system("/opt/hifiberry/bin/pause-all alsaloop")
-                (input_device, output_device) = open_sound(output=True)
-                output_stopped = False
-                continue
+                count_playback_threshold_met += 1
+                if count_playback_threshold_met >= CHECK_NUMBER_BEFORE_TURN_ON:
+                    del input_device
+                    logging.info("Input signal detected, pausing other players")
+                    os.system("/opt/hifiberry/bin/pause-all alsaloop")
+                    (input_device, output_device) = open_sound(output=True)
+                    output_stopped = False
+                    continue
 
             elif not output_stopped and not input_detected:
                 count_playback_threshold_not_met += 1
@@ -191,6 +197,8 @@ if __name__ == '__main__':
             if input_detected:
                 # Reset counter when input detected
                 count_playback_threshold_not_met = 0
+            else:
+                count_playback_threshold_met = 0
 
         if not output_stopped:
             output_device.write(data)
