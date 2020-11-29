@@ -51,7 +51,7 @@ SAMPLE_COUNT_BEFORE_CHECK = int((SAMPLE_RATE / CHANNELS) * SAMPLE_SECONDS_BEFORE
 # This is useful for preventing the output device from turning off and on when there is a short silence in the input.
 SAMPLE_SECONDS_BEFORE_TURN_OFF = 15
 # The number of checks which have to fail before audio is turned off.
-CHECK_NUMBER_BEFORE_TURN_OFF = int(SAMPLE_SECONDS_BEFORE_TURN_OFF / SAMPLE_COUNT_BEFORE_CHECK)
+CHECK_NUMBER_BEFORE_TURN_OFF = int(SAMPLE_SECONDS_BEFORE_TURN_OFF / SAMPLE_SECONDS_BEFORE_CHECK)
 
 
 def open_sound(output=False):
