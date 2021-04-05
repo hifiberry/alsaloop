@@ -225,20 +225,20 @@ class ALSALoopWrapper(threading.Thread):
                     
             line = self.alsaloopclient.stdout.readline()
 
-            parts=line.split(" ")
             pbstatus_old = self.playback_status
-            if len(parts)>2:
-                if parts[0].lower()=="p":
-                    self.playback_status = PLAYBACK_PLAYING
-                elif parts[0]=="-":
-                    self.playback_status = PLAYBACK_STOPPED
+
+            # Use the first character of the line for active/inactive state detection
+            if line[0] == "A":
+                self.playback_status = PLAYBACK_PLAYING
+            elif line[0] == "-":
+                self.playback_status = PLAYBACK_STOPPED
                     
-                # Ignore decibel for the moment
-                #try:
-                #    db = float(parts[1])
-                #except:
-                #    db = 0
-                
+            # Ignore decibel for the moment
+            #try:
+            #    db = float(parts[1])
+            #except:
+            #    db = 0
+
             if self.playback_status != pbstatus_old:
                 logging.info("playback status changed from %s to %s",pbstatus_old, self.playback_status)
             
