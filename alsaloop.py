@@ -162,12 +162,12 @@ if __name__ == '__main__':
             # Check if the threshold has been exceeded
             if start_db_threshold == 0 or decibel(max_sample) > threshold:
                 input_detected = True
-                status = "P"
             else:
                 input_detected = False
-                status = "-"
 
-            print("{} {:.1f} {:.1f}".format(status, decibel(rms_volume), decibel(max_sample)), flush=True)
+            triggered_status_string = "T" if input_detected else "-"
+            active_status_str = "A" if not output_stopped else "-"
+            print("{} {} {:.1f} {:.1f}".format(active_status_str, triggered_status_string, decibel(rms_volume), decibel(max_sample)), flush=True)
 
             sample_sum = 0
             samples = 0
@@ -189,6 +189,7 @@ if __name__ == '__main__':
                 if count_playback_threshold_not_met > CHECK_NUMBER_BEFORE_TURN_OFF:
                     del input_device
                     output_device = None
+                    print("Input signal lost, stopping playback")
                     logging.info("Input signal lost, stopping playback")
                     input_device = open_sound(output=False)
                     output_stopped = True
