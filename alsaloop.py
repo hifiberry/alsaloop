@@ -53,7 +53,7 @@ SAMPLE_SECONDS_BEFORE_TURN_OFF = 15
 # The number of checks which have to fail before audio is turned off.
 CHECK_NUMBER_BEFORE_TURN_OFF = int(SAMPLE_SECONDS_BEFORE_TURN_OFF / SAMPLE_SECONDS_BEFORE_CHECK)
 # The number of checks which have to pass before audio is turned on.
-CHECK_NUMBER_BEFORE_TURN_ON = 2
+CHECK_NUMBER_BEFORE_TURN_ON = 3
 
 
 def open_sound(output=False):
