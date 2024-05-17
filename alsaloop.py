@@ -60,7 +60,7 @@ CHECK_NUMBER_BEFORE_TURN_ON = 3
 def open_sound(output=False):
     input_device = alsaaudio.PCM(alsaaudio.PCM_CAPTURE,
         alsaaudio.PCM_NONBLOCK,
-        device=device,
+        device=DEVICE_NAME,
         channels=CHANNELS,
         rate=SAMPLE_RATE,
         format=alsaaudio.PCM_FORMAT_S16_LE,                                                                                                                                           
@@ -69,7 +69,7 @@ def open_sound(output=False):
     if output:
         output_device = alsaaudio.PCM(alsaaudio.PCM_PLAYBACK,
                                       alsaaudio.PCM_NONBLOCK,
-                                      device=device,
+                                      device=DEVICE_NAME,
                                       channels=CHANNELS,
                                       rate=SAMPLE_RATE,
                                       format=alsaaudio.PCM_FORMAT_S16_LE)        
