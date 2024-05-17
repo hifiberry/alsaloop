@@ -216,4 +216,8 @@ if __name__ == '__main__':
                 count_playback_threshold_met = 0
 
         if not output_stopped:
-            output_device.write(data)
+            try:
+                output_device.write(data)
+            except:
+                logging.info("Couldn't write to output device, stopping output")
+                output_stopped = True
