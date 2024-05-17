@@ -28,6 +28,7 @@ import logging
 from math import sqrt, log
 from struct import unpack_from
 import os
+import requests
 
 import alsaaudio
 
@@ -66,10 +67,12 @@ def open_sound(output=False):
         periodsize=PERIOD_SIZE)
 
     if output:
-        output_device = alsaaudio.PCM(alsaaudio.PCM_PLAYBACK, alsaaudio.PCM_NONBLOCK, device=DEVICE_NAME)
-        output_device.setchannels(CHANNELS)
-        output_device.setrate(SAMPLE_RATE)
-        output_device.setformat(alsaaudio.PCM_FORMAT_S16_LE)
+        output_device = alsaaudio.PCM(alsaaudio.PCM_PLAYBACK,
+                                      alsaaudio.PCM_NONBLOCK,
+                                      device=device,
+                                      channels=CHANNELS,
+                                      rate=SAMPLE_RATE,
+                                      format=alsaaudio.PCM_FORMAT_S16_LE)        
         return input_device, output_device
 
     else:
@@ -84,6 +87,15 @@ def stop_playback(_signalNumber, _frame):
     global output_stopped
     logging.info("received USR1, stopping music playback")
     output_stopped = True
+
+def pause_other():
+    # URL for the POST request
+    url = "http://172.17.0.1:81/api/player/stop-all/alsaloop"
+    try:
+        response = requests.post(url)
+    except:
+        logging.error("Stopping other players via audiocontrol failed")
+
 
 
 if __name__ == '__main__':
@@ -180,7 +192,7 @@ if __name__ == '__main__':
                 if count_playback_threshold_met >= CHECK_NUMBER_BEFORE_TURN_ON:
                     del input_device
                     logging.info("Input signal detected, pausing other players")
-                    os.system("/opt/hifiberry/bin/pause-all alsaloop")
+                    pause_other()
                     (input_device, output_device) = open_sound(output=True)
                     output_stopped = False
                     continue
